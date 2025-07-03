@@ -17,7 +17,7 @@ load_dotenv(dotenv_path=env_path)
 
 from .models import (
     WolframRequest, WolframResponse, HealthResponse, ErrorResponse,
-    ExecuteWolframRequest, WolframAlphaRequest
+    ExecuteWolframRequest
 )
 from .wolfram_client import ImprovedWolframLanguageClient
 from . import __version__
@@ -164,53 +164,6 @@ async def execute_wolfram_code(request: ExecuteWolframRequest):
         )
 
 
-@app.post("/wolfram-alpha", response_model=WolframResponse)
-async def query_wolfram_alpha(request: WolframAlphaRequest):
-    """Query Wolfram Alpha using natural language."""
-    global wolfram_executor
-
-    if not wolfram_executor:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Wolfram executor not initialized"
-        )
-
-    # Check if Wolfram is available
-    available, error = await wolfram_executor.is_available()
-    if not available:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Wolfram Language not available: {error}"
-        )
-
-    try:
-        # Query Wolfram Alpha
-        success, result, error_msg, execution_time = await wolfram_executor.query_wolfram_alpha(
-            request.query,
-            request.timeout or 30,
-            request.format or "Result"
-        )
-
-        # Format the result
-        output = None
-        if success and result is not None:
-            output = str(result)
-
-        return WolframResponse(
-            success=success,
-            result=None,  # Keep as None for consistency with original API
-            output=output,
-            error=error_msg,
-            execution_time=execution_time
-        )
-
-    except Exception as e:
-        logger.error(f"Wolfram Alpha query error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Query failed: {str(e)}"
-        )
-
 
 @app.get("/")
 async def root():
@@ -222,7 +175,6 @@ async def root():
         "endpoints": {
             "health": "/health",
             "execute-wolfram": "/execute-wolfram",
-            "wolfram-alpha": "/wolfram-alpha",
             "docs": "/docs",
             "openapi": "/openapi.json"
         }

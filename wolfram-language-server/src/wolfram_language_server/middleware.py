@@ -47,7 +47,7 @@ class SecurityMiddleware:
                 return
             
             # Authentication (for protected endpoints)
-            if request.url.path in ["/execute-wolfram", "/wolfram-alpha"]:
+            if request.url.path in ["/execute-wolfram"]:
                 authenticated, auth_reason = await auth_handler.authenticate(request)
                 if not authenticated:
                     logger.warning(f"Authentication failed for {client_ip}: {auth_reason}")

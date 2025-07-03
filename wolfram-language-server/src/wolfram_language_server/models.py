@@ -64,9 +64,3 @@ class ExecuteWolframRequest(BaseModel):
     timeout: Optional[int] = Field(30, description="Execution timeout in seconds", ge=1, le=300)
 
 
-class WolframAlphaRequest(BaseModel):
-    """Request model for Wolfram Alpha natural language queries."""
-    
-    query: str = Field(..., description="Natural language query for Wolfram Alpha")
-    timeout: Optional[int] = Field(30, description="Query timeout in seconds", ge=1, le=300)
-    format: Optional[str] = Field("Result", description="Wolfram Alpha result format")

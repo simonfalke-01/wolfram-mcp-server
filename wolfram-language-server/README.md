@@ -63,16 +63,6 @@ curl -X POST http://localhost:8000/execute-wolfram \
   }'
 ```
 
-#### Query Wolfram Alpha (Natural Language)
-```bash
-curl -X POST http://localhost:8000/wolfram-alpha \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "solve x^2 + 2x - 3 = 0",
-    "timeout": 30,
-    "format": "Result"
-  }'
-```
 
 ## Security Features
 
