@@ -3,14 +3,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { WolframAlphaClient } from "./wolfram.js";
 import { withAuth } from "./auth.js";
+import { WolframLanguageClient } from "./wolfram_backend.js";
 
 // Define our MCP agent with tools
 export class MyMCP extends McpAgent {
 	private wolframClient?: WolframAlphaClient;
+	private wolframLanguageClient?: WolframLanguageClient;
 
 	// @ts-ignore - Ignore type conflict between SDK versions
 	server = new McpServer({
-		name: "Wolfram Alpha MCP Server",
+		name: "Wolfram MCP Server",
 		version: "1.0.0",
 	});
 
@@ -20,6 +22,10 @@ export class MyMCP extends McpAgent {
 		if (apiKey) {
 			this.wolframClient = new WolframAlphaClient(apiKey);
 		}
+
+		// Initialize Wolfram Language Server client
+		const wolframServerUrl = (this.env as any)?.WOLFRAM_LANGUAGE_SERVER_URL || "http://localhost:8000";
+		this.wolframLanguageClient = new WolframLanguageClient(wolframServerUrl);
 
 		// Wolfram Alpha query tool
 		this.server.tool(
@@ -148,6 +154,196 @@ export class MyMCP extends McpAgent {
 						break;
 				}
 				return { content: [{ type: "text", text: String(result) }] };
+			},
+		);
+
+		// Wolfram Language execution tool
+		this.server.tool(
+			"wolfram_execute",
+			{
+				code: z.string().describe("Wolfram Language code to execute"),
+				timeout: z.number().optional().default(30).describe("Execution timeout in seconds (1-300)"),
+				format: z.enum(["text", "json", "image"]).optional().default("text").describe("Output format")
+			},
+			async ({
+				code,
+				timeout,
+				format,
+			}: {
+				code: string;
+				timeout?: number;
+				format?: "text" | "json" | "image";
+			}) => {
+				if (!this.wolframLanguageClient) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: "Error: Wolfram Language Server client not initialized.",
+							},
+						],
+					};
+				}
+
+				try {
+					// First check if the server is available
+					const connection = await this.wolframLanguageClient.testConnection();
+					if (!connection.available) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Error: Wolfram Language Server not available: ${connection.error}`,
+								},
+							],
+						};
+					}
+
+					// Execute the Wolfram code
+					const response = await this.wolframLanguageClient.execute({
+						code,
+						timeout: timeout || 30,
+						format: format || "text"
+					});
+
+					if (!response.success) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Wolfram execution failed: ${response.error || "Unknown error"}`,
+								},
+							],
+						};
+					}
+
+					// Format the response
+					let resultText = "";
+					if (response.output) {
+						resultText = response.output;
+					} else if (response.result) {
+						resultText = typeof response.result === "string" 
+							? response.result 
+							: JSON.stringify(response.result, null, 2);
+					} else {
+						resultText = "Execution completed successfully (no output)";
+					}
+
+					if (response.execution_time) {
+						resultText += `\n\n*Execution time: ${response.execution_time.toFixed(3)}s*`;
+					}
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: resultText,
+							},
+						],
+					};
+				} catch (error) {
+					const errorMessage = error instanceof Error ? error.message : String(error);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Error executing Wolfram code: ${errorMessage}`,
+							},
+						],
+					};
+				}
+			},
+		);
+
+		// Wolfram Language expression evaluation tool (for simple expressions)
+		this.server.tool(
+			"wolfram_evaluate",
+			{
+				expression: z.string().describe("Wolfram Language expression to evaluate"),
+				timeout: z.number().optional().default(10).describe("Evaluation timeout in seconds (1-60)")
+			},
+			async ({
+				expression,
+				timeout,
+			}: {
+				expression: string;
+				timeout?: number;
+			}) => {
+				if (!this.wolframLanguageClient) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: "Error: Wolfram Language Server client not initialized.",
+							},
+						],
+					};
+				}
+
+				try {
+					// First check if the server is available
+					const connection = await this.wolframLanguageClient.testConnection();
+					if (!connection.available) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Error: Wolfram Language Server not available: ${connection.error}`,
+								},
+							],
+						};
+					}
+
+					// Evaluate the expression
+					const response = await this.wolframLanguageClient.evaluate({
+						expression,
+						timeout: timeout || 10
+					});
+
+					if (!response.success) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Wolfram evaluation failed: ${response.error || "Unknown error"}`,
+								},
+							],
+						};
+					}
+
+					// Format the response
+					let resultText = "";
+					if (response.result !== undefined && response.result !== null) {
+						resultText = typeof response.result === "string" 
+							? response.result 
+							: JSON.stringify(response.result, null, 2);
+					} else {
+						resultText = "Evaluation completed (no result)";
+					}
+
+					if (response.execution_time) {
+						resultText += `\n\n*Execution time: ${response.execution_time.toFixed(3)}s*`;
+					}
+
+					return {
+						content: [
+							{
+								type: "text",
+								text: resultText,
+							},
+						],
+					};
+				} catch (error) {
+					const errorMessage = error instanceof Error ? error.message : String(error);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Error evaluating Wolfram expression: ${errorMessage}`,
+							},
+						],
+					};
+				}
 			},
 		);
 	}
