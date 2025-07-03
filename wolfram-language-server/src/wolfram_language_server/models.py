@@ -55,3 +55,18 @@ class EvaluateResponse(BaseModel):
     result: Optional[Union[str, int, float, bool, List, Dict]] = Field(None, description="Evaluation result")
     error: Optional[str] = Field(None, description="Error message if evaluation failed")
     execution_time: Optional[float] = Field(None, description="Execution time in seconds")
+
+
+class ExecuteWolframRequest(BaseModel):
+    """Request model for Wolfram Language execution using wlexpr."""
+    
+    code: str = Field(..., description="Wolfram Language code to execute (strict syntax)")
+    timeout: Optional[int] = Field(30, description="Execution timeout in seconds", ge=1, le=300)
+
+
+class WolframAlphaRequest(BaseModel):
+    """Request model for Wolfram Alpha natural language queries."""
+    
+    query: str = Field(..., description="Natural language query for Wolfram Alpha")
+    timeout: Optional[int] = Field(30, description="Query timeout in seconds", ge=1, le=300)
+    format: Optional[str] = Field("Result", description="Wolfram Alpha result format")

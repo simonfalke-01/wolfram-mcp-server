@@ -47,7 +47,7 @@ class SecurityMiddleware:
                 return
             
             # Authentication (for protected endpoints)
-            if request.url.path in ["/execute", "/evaluate"]:
+            if request.url.path in ["/execute-wolfram", "/wolfram-alpha"]:
                 authenticated, auth_reason = await auth_handler.authenticate(request)
                 if not authenticated:
                     logger.warning(f"Authentication failed for {client_ip}: {auth_reason}")
@@ -126,7 +126,7 @@ class LoggingMiddleware:
 
 async def validate_code_middleware(request: Request, call_next: Callable) -> Response:
     """Middleware to validate Wolfram code for security."""
-    if request.url.path in ["/execute"] and request.method == "POST":
+    if request.url.path in ["/execute-wolfram"] and request.method == "POST":
         try:
             # Read the request body
             body = await request.body()

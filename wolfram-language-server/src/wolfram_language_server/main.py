@@ -17,7 +17,7 @@ load_dotenv(dotenv_path=env_path)
 
 from .models import (
     WolframRequest, WolframResponse, HealthResponse, ErrorResponse,
-    EvaluateRequest, EvaluateResponse
+    ExecuteWolframRequest, WolframAlphaRequest
 )
 from .wolfram_client import WolframExecutor
 from . import __version__
@@ -117,9 +117,9 @@ async def health_check():
     )
 
 
-@app.post("/execute", response_model=WolframResponse)
-async def execute_wolfram_code(request: WolframRequest):
-    """Execute Wolfram Language code."""
+@app.post("/execute-wolfram", response_model=WolframResponse)
+async def execute_wolfram_code(request: ExecuteWolframRequest):
+    """Execute Wolfram Language code using wlexpr (strict syntax)."""
     global wolfram_executor
 
     if not wolfram_executor:
@@ -137,44 +137,36 @@ async def execute_wolfram_code(request: WolframRequest):
         )
 
     try:
-        # Execute the code
-        success, result, error_msg, execution_time = await wolfram_executor.execute_code(
+        # Execute the Wolfram code using wlexpr
+        success, result, error_msg, execution_time = await wolfram_executor.execute_wolfram_code(
             request.code,
             request.timeout or 30
         )
 
         # Format the result
-        formatted_result = None
         output = None
-
         if success and result is not None:
-            if request.format == "json":
-                try:
-                    formatted_result = wolfram_executor._format_result(result, "json")
-                except Exception:
-                    output = str(result)
-            else:
-                output = str(result)
+            output = str(result)
 
         return WolframResponse(
             success=success,
-            result=formatted_result,
+            result=None,  # Keep as None for consistency with original API
             output=output,
             error=error_msg,
             execution_time=execution_time
         )
 
     except Exception as e:
-        logger.error(f"Code execution error: {e}", exc_info=True)
+        logger.error(f"Wolfram code execution error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Execution failed: {str(e)}"
         )
 
 
-@app.post("/evaluate", response_model=EvaluateResponse)
-async def evaluate_expression(request: EvaluateRequest):
-    """Evaluate a simple Wolfram Language expression."""
+@app.post("/wolfram-alpha", response_model=WolframResponse)
+async def query_wolfram_alpha(request: WolframAlphaRequest):
+    """Query Wolfram Alpha using natural language."""
     global wolfram_executor
 
     if not wolfram_executor:
@@ -192,35 +184,31 @@ async def evaluate_expression(request: EvaluateRequest):
         )
 
     try:
-        # Evaluate the expression
-        success, result, error_msg, execution_time = await wolfram_executor.evaluate_expression(
-            request.expression,
-            request.timeout or 10
+        # Query Wolfram Alpha
+        success, result, error_msg, execution_time = await wolfram_executor.query_wolfram_alpha(
+            request.query,
+            request.timeout or 30,
+            request.format or "Result"
         )
 
-        # Try to convert result to a JSON-serializable format
-        formatted_result = None
+        # Format the result
+        output = None
         if success and result is not None:
-            try:
-                if isinstance(result, (int, float, str, bool, list, dict)):
-                    formatted_result = result
-                else:
-                    formatted_result = str(result)
-            except Exception:
-                formatted_result = str(result)
+            output = str(result)
 
-        return EvaluateResponse(
+        return WolframResponse(
             success=success,
-            result=formatted_result,
+            result=None,  # Keep as None for consistency with original API
+            output=output,
             error=error_msg,
             execution_time=execution_time
         )
 
     except Exception as e:
-        logger.error(f"Expression evaluation error: {e}", exc_info=True)
+        logger.error(f"Wolfram Alpha query error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Evaluation failed: {str(e)}"
+            detail=f"Query failed: {str(e)}"
         )
 
 
@@ -233,8 +221,8 @@ async def root():
         "status": "running",
         "endpoints": {
             "health": "/health",
-            "execute": "/execute",
-            "evaluate": "/evaluate",
+            "execute-wolfram": "/execute-wolfram",
+            "wolfram-alpha": "/wolfram-alpha",
             "docs": "/docs",
             "openapi": "/openapi.json"
         }

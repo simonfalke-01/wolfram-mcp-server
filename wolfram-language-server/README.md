@@ -53,24 +53,24 @@ The server will start on `http://localhost:8000` by default.
 curl http://localhost:8000/health
 ```
 
-#### Execute Wolfram Code
+#### Execute Wolfram Language Code (Strict Syntax)
 ```bash
-curl -X POST http://localhost:8000/execute \
+curl -X POST http://localhost:8000/execute-wolfram \
   -H "Content-Type: application/json" \
   -d '{
     "code": "Solve[x^2 + 2x - 3 == 0, x]",
-    "timeout": 30,
-    "format": "text"
+    "timeout": 30
   }'
 ```
 
-#### Evaluate Expression
+#### Query Wolfram Alpha (Natural Language)
 ```bash
-curl -X POST http://localhost:8000/evaluate \
+curl -X POST http://localhost:8000/wolfram-alpha \
   -H "Content-Type: application/json" \
   -d '{
-    "expression": "Integrate[x^2, x]",
-    "timeout": 10
+    "query": "solve x^2 + 2x - 3 = 0",
+    "timeout": 30,
+    "format": "Result"
   }'
 ```
 

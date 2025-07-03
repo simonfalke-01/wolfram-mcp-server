@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 from pathlib import Path
 
 from wolframclient.evaluation import WolframLanguageSession
-from wolframclient.language import wl
+from wolframclient.language import wl, wlexpr
 from wolframclient.exception import WolframKernelException
 
 
@@ -196,3 +196,92 @@ class WolframExecutor:
             return str(result)
         else:
             return str(result)
+    
+    async def execute_wolfram_code(self, code: str, timeout: int = 30) -> Tuple[bool, Any, Optional[str], float]:
+        """Execute Wolfram Language code using wlexpr (strict syntax).
+        
+        Args:
+            code: Wolfram Language code to execute (must be valid Wolfram syntax)
+            timeout: Execution timeout in seconds
+            
+        Returns:
+            Tuple of (success, result, error_message, execution_time)
+        """
+        if self._session is None:
+            await self.start_session()
+        
+        if self._session is None:
+            return False, None, "Wolfram session not available", 0.0
+        
+        start_time = time.time()
+        
+        try:
+            # Parse the code using wlexpr and evaluate
+            async with asyncio.timeout(timeout):
+                # Use wlexpr to parse the Wolfram Language code
+                parsed_expr = wlexpr(code)
+                result = await self._run_in_executor(
+                    lambda: self._session.evaluate(parsed_expr)
+                )
+            
+            execution_time = time.time() - start_time
+            
+            # Check if result indicates an error
+            if hasattr(result, 'head') and str(result.head) == '$Failed':
+                return False, None, "Evaluation failed", execution_time
+            
+            return True, result, None, execution_time
+            
+        except asyncio.TimeoutError:
+            execution_time = time.time() - start_time
+            return False, None, f"Execution timed out after {timeout} seconds", execution_time
+        except WolframKernelException as e:
+            execution_time = time.time() - start_time
+            return False, None, f"Wolfram kernel error: {str(e)}", execution_time
+        except Exception as e:
+            execution_time = time.time() - start_time
+            return False, None, f"Execution error: {str(e)}", execution_time
+    
+    async def query_wolfram_alpha(self, query: str, timeout: int = 30, format_type: str = "Result") -> Tuple[bool, Any, Optional[str], float]:
+        """Query Wolfram Alpha using natural language.
+        
+        Args:
+            query: Natural language query for Wolfram Alpha
+            timeout: Query timeout in seconds
+            format_type: Wolfram Alpha result format (default: "Result")
+            
+        Returns:
+            Tuple of (success, result, error_message, execution_time)
+        """
+        if self._session is None:
+            await self.start_session()
+        
+        if self._session is None:
+            return False, None, "Wolfram session not available", 0.0
+        
+        start_time = time.time()
+        
+        try:
+            # Use WolframAlpha function for natural language queries
+            async with asyncio.timeout(timeout):
+                result = await self._run_in_executor(
+                    lambda: self._session.evaluate(wl.WolframAlpha(query, format_type))
+                )
+            
+            execution_time = time.time() - start_time
+            
+            # Check if result indicates an error
+            if hasattr(result, 'head') and str(result.head) == '$Failed':
+                return False, None, "Wolfram Alpha query failed", execution_time
+            
+            return True, result, None, execution_time
+            
+        except asyncio.TimeoutError:
+            execution_time = time.time() - start_time
+            return False, None, f"Query timed out after {timeout} seconds", execution_time
+        except WolframKernelException as e:
+            execution_time = time.time() - start_time
+            return False, None, f"Wolfram kernel error: {str(e)}", execution_time
+        except Exception as e:
+            execution_time = time.time() - start_time
+            return False, None, f"Query error: {str(e)}", execution_time
