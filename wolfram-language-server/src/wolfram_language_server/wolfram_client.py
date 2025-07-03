@@ -1,287 +1,287 @@
-"""Wolfram Language client using wolframclient library."""
+"""Improved Wolfram Language client with better session management and performance."""
 
 import asyncio
 import logging
 import time
-from typing import Any, Dict, Optional, Tuple, Union
-from pathlib import Path
+from typing import Optional, Dict, Any, Tuple
+from concurrent.futures import ThreadPoolExecutor
 
 from wolframclient.evaluation import WolframLanguageSession
-from wolframclient.language import wl, wlexpr
-from wolframclient.exception import WolframKernelException
+from wolframclient.language import wlexpr
+from wolframclient.language import wl
 
 
 logger = logging.getLogger(__name__)
 
 
-class WolframExecutor:
-    """Handles Wolfram Language code execution."""
-
+class ImprovedWolframLanguageClient:
+    """Improved Wolfram Language client with optimized session management."""
+    
     def __init__(self, kernel_path: Optional[str] = None):
-        """Initialize the Wolfram executor.
-
+        """Initialize the Wolfram Language client.
+        
         Args:
-            kernel_path: Optional path to Wolfram Kernel executable
+            kernel_path: Path to Wolfram kernel executable (optional)
         """
         self.kernel_path = kernel_path
         self._session: Optional[WolframLanguageSession] = None
         self._session_lock = asyncio.Lock()
-
-    async def __aenter__(self):
-        """Async context manager entry."""
-        await self.start_session()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
-        await self.stop_session()
-
-    async def start_session(self) -> None:
-        """Start a Wolfram Language session."""
-        async with self._session_lock:
-            if self._session is None:
-                try:
-                    if self.kernel_path:
-                        self._session = WolframLanguageSession(kernel=self.kernel_path)
-                        logger.info(f"Kernel path provided: {self.kernel_path}")
-                    else:
-                        self._session = WolframLanguageSession()
-
-                    # Test the session with a simple evaluation
-                    await self._run_in_executor(lambda: self._session.evaluate(wl.Plus(1, 1)))
-                    logger.info("Wolfram Language session started successfully")
-                except Exception as e:
-                    logger.error(f"Failed to start Wolfram session: {e}")
-                    self._session = None
-                    raise
-
-    async def stop_session(self) -> None:
-        """Stop the Wolfram Language session."""
-        async with self._session_lock:
-            if self._session:
-                try:
-                    await self._run_in_executor(self._session.terminate)
-                    logger.info("Wolfram Language session terminated")
-                except Exception as e:
-                    logger.warning(f"Error terminating Wolfram session: {e}")
-                finally:
-                    self._session = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wolfram")
+        self._session_initialized = False
+        self._last_activity = time.time()
+        
+        # Session keep-alive settings
+        self.session_timeout = 300  # 5 minutes of inactivity before closing
+        self.max_retries = 3
+        
+        logger.info(f"Wolfram client initialized with kernel_path: {kernel_path}")
 
     async def _run_in_executor(self, func, *args):
-        """Run a blocking function in an executor."""
+        """Run a function in the thread executor."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, func, *args)
+        return await loop.run_in_executor(self._executor, func, *args)
 
-    async def is_available(self) -> Tuple[bool, Optional[str]]:
-        """Check if Wolfram Language is available.
+    async def _ensure_session(self) -> bool:
+        """Ensure we have a working session, with retry logic."""
+        async with self._session_lock:
+            # Check if we need to create or recreate the session
+            if self._session is None or not self._session_initialized:
+                logger.info("Creating new Wolfram session...")
+                
+                for attempt in range(self.max_retries):
+                    try:
+                        start_time = time.time()
+                        
+                        # Create session
+                        if self.kernel_path:
+                            self._session = WolframLanguageSession(kernel=self.kernel_path)
+                            logger.info(f"Using kernel path: {self.kernel_path}")
+                        else:
+                            self._session = WolframLanguageSession()
+                            logger.info("Using default kernel")
+                        
+                        # Test the session with a simple evaluation
+                        test_result = await self._run_in_executor(
+                            lambda: self._session.evaluate(wl.Plus(1, 1))
+                        )
+                        
+                        creation_time = time.time() - start_time
+                        logger.info(f"Session created successfully in {creation_time:.3f}s, test result: {test_result}")
+                        
+                        # Additional initialization to warm up the session
+                        await self._run_in_executor(
+                            lambda: self._session.evaluate(wlexpr("$Version"))
+                        )
+                        
+                        self._session_initialized = True
+                        self._last_activity = time.time()
+                        return True
+                        
+                    except Exception as e:
+                        logger.error(f"Session creation attempt {attempt + 1} failed: {e}")
+                        if self._session:
+                            try:
+                                await self._run_in_executor(self._session.terminate)
+                            except:
+                                pass
+                            self._session = None
+                        
+                        if attempt < self.max_retries - 1:
+                            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        else:
+                            logger.error("All session creation attempts failed")
+                            return False
+            else:
+                # Session exists, check if it's still alive
+                try:
+                    await self._run_in_executor(
+                        lambda: self._session.evaluate(wl.Plus(1, 1))
+                    )
+                    self._last_activity = time.time()
+                    return True
+                except Exception as e:
+                    logger.warning(f"Session health check failed: {e}, recreating session")
+                    self._session = None
+                    self._session_initialized = False
+                    return await self._ensure_session()  # Recursive call to recreate
+        
+        return False
 
-        Returns:
-            Tuple of (available, error_message)
-        """
-        try:
-            if self._session is None:
-                await self.start_session()
-            return True, None
-        except Exception as e:
-            return False, str(e)
-
-    async def get_kernel_info(self) -> Optional[Dict[str, Any]]:
-        """Get information about the Wolfram Kernel.
-
-        Returns:
-            Dictionary with kernel information or None if unavailable
-        """
-        try:
-            if self._session is None:
-                await self.start_session()
-
-            if self._session:
-                # Get basic kernel information
-                version = await self._run_in_executor(
-                    lambda: self._session.evaluate(wl.SystemInformation("Kernel"))
-                )
-                return {
-                    "version": str(version) if version else "Unknown",
-                    "session_active": True
-                }
-        except Exception as e:
-            logger.error(f"Failed to get kernel info: {e}")
-
-        return None
-
-    async def execute_code(self, code: str, timeout: int = 30) -> Tuple[bool, Any, Optional[str], float]:
-        """Execute Wolfram Language code.
-
-        Args:
-            code: Wolfram Language code to execute
-            timeout: Execution timeout in seconds
-
-        Returns:
-            Tuple of (success, result, error_message, execution_time)
-        """
-        if self._session is None:
-            await self.start_session()
-
-        if self._session is None:
-            return False, None, "Wolfram session not available", 0.0
-
-        start_time = time.time()
-
-        try:
-            # Set timeout for the evaluation
-            async with asyncio.timeout(timeout):
-                result = await self._run_in_executor(
-                    lambda: self._session.evaluate(code)
-                )
-
-            execution_time = time.time() - start_time
-
-            # Check if result indicates an error
-            if hasattr(result, 'head') and str(result.head) == '$Failed':
-                return False, None, "Evaluation failed", execution_time
-
-            return True, result, None, execution_time
-
-        except asyncio.TimeoutError:
-            execution_time = time.time() - start_time
-            return False, None, f"Execution timed out after {timeout} seconds", execution_time
-        except WolframKernelException as e:
-            execution_time = time.time() - start_time
-            return False, None, f"Wolfram kernel error: {str(e)}", execution_time
-        except Exception as e:
-            execution_time = time.time() - start_time
-            return False, None, f"Execution error: {str(e)}", execution_time
-
-    async def evaluate_expression(self, expression: str, timeout: int = 10) -> Tuple[bool, Any, Optional[str], float]:
-        """Evaluate a simple Wolfram Language expression.
-
-        Args:
-            expression: Wolfram Language expression to evaluate
-            timeout: Evaluation timeout in seconds
-
-        Returns:
-            Tuple of (success, result, error_message, execution_time)
-        """
-        return await self.execute_code(expression, timeout)
-
-    def _format_result(self, result: Any, format_type: str = "text") -> Any:
-        """Format the result based on the requested format.
-
-        Args:
-            result: The raw result from Wolfram
-            format_type: Format type ('text', 'json', 'image')
-
-        Returns:
-            Formatted result
-        """
-        if result is None:
-            return None
-
-        if format_type == "text":
-            return str(result)
-        elif format_type == "json":
-            # Try to convert to a JSON-serializable format
-            try:
-                if hasattr(result, 'to_dict'):
-                    return result.to_dict()
-                elif isinstance(result, (int, float, str, bool, list, dict)):
-                    return result
-                else:
-                    return str(result)
-            except Exception:
-                return str(result)
-        elif format_type == "image":
-            # Handle image results - this would need additional logic
-            # for now, just return as string
-            return str(result)
-        else:
-            return str(result)
-    
     async def execute_wolfram_code(self, code: str, timeout: int = 30) -> Tuple[bool, Any, Optional[str], float]:
         """Execute Wolfram Language code using wlexpr (strict syntax).
         
         Args:
-            code: Wolfram Language code to execute (must be valid Wolfram syntax)
+            code: Wolfram Language code to execute (strict syntax)
             timeout: Execution timeout in seconds
             
         Returns:
             Tuple of (success, result, error_message, execution_time)
         """
-        if self._session is None:
-            await self.start_session()
-        
-        if self._session is None:
-            return False, None, "Wolfram session not available", 0.0
-        
+        logger.info(f"Executing Wolfram code: {code[:100]}...")
         start_time = time.time()
         
         try:
-            # Parse the code using wlexpr and evaluate
-            async with asyncio.timeout(timeout):
-                # Use wlexpr to parse the Wolfram Language code
-                parsed_expr = wlexpr(code)
-                result = await self._run_in_executor(
-                    lambda: self._session.evaluate(parsed_expr)
+            # Ensure we have a working session
+            if not await self._ensure_session():
+                return False, None, "Failed to establish Wolfram session", 0.0
+            
+            # Parse and execute the code
+            def execute():
+                parsed_code = wlexpr(code)
+                return self._session.evaluate(parsed_code)
+            
+            # Execute with timeout
+            try:
+                result = await asyncio.wait_for(
+                    self._run_in_executor(execute),
+                    timeout=timeout
                 )
-            
-            execution_time = time.time() - start_time
-            
-            # Check if result indicates an error
-            if hasattr(result, 'head') and str(result.head) == '$Failed':
-                return False, None, "Evaluation failed", execution_time
-            
-            return True, result, None, execution_time
-            
-        except asyncio.TimeoutError:
-            execution_time = time.time() - start_time
-            return False, None, f"Execution timed out after {timeout} seconds", execution_time
-        except WolframKernelException as e:
-            execution_time = time.time() - start_time
-            return False, None, f"Wolfram kernel error: {str(e)}", execution_time
+                
+                execution_time = time.time() - start_time
+                logger.info(f"Execution completed in {execution_time:.3f}s")
+                
+                return True, result, None, execution_time
+                
+            except asyncio.TimeoutError:
+                execution_time = time.time() - start_time
+                logger.error(f"Execution timed out after {timeout}s")
+                return False, None, f"Execution timed out after {timeout} seconds", execution_time
+                
         except Exception as e:
             execution_time = time.time() - start_time
-            return False, None, f"Execution error: {str(e)}", execution_time
-    
+            logger.error(f"Execution failed: {e}")
+            return False, None, str(e), execution_time
+
     async def query_wolfram_alpha(self, query: str, timeout: int = 30, format_type: str = "Result") -> Tuple[bool, Any, Optional[str], float]:
         """Query Wolfram Alpha using natural language.
         
         Args:
             query: Natural language query for Wolfram Alpha
             timeout: Query timeout in seconds
-            format_type: Wolfram Alpha result format (default: "Result")
+            format_type: Wolfram Alpha result format
             
         Returns:
             Tuple of (success, result, error_message, execution_time)
         """
-        if self._session is None:
-            await self.start_session()
-        
-        if self._session is None:
-            return False, None, "Wolfram session not available", 0.0
-        
+        logger.info(f"Querying Wolfram Alpha: {query[:100]}...")
         start_time = time.time()
         
         try:
-            # Use WolframAlpha function for natural language queries
-            async with asyncio.timeout(timeout):
-                result = await self._run_in_executor(
-                    lambda: self._session.evaluate(wl.WolframAlpha(query, format_type))
+            # Ensure we have a working session
+            if not await self._ensure_session():
+                return False, None, "Failed to establish Wolfram session", 0.0
+            
+            # Execute WolframAlpha query
+            def execute():
+                return self._session.evaluate(wl.WolframAlpha(query, format_type))
+            
+            # Execute with timeout
+            try:
+                result = await asyncio.wait_for(
+                    self._run_in_executor(execute),
+                    timeout=timeout
                 )
-            
-            execution_time = time.time() - start_time
-            
-            # Check if result indicates an error
-            if hasattr(result, 'head') and str(result.head) == '$Failed':
-                return False, None, "Wolfram Alpha query failed", execution_time
-            
-            return True, result, None, execution_time
-            
-        except asyncio.TimeoutError:
-            execution_time = time.time() - start_time
-            return False, None, f"Query timed out after {timeout} seconds", execution_time
-        except WolframKernelException as e:
-            execution_time = time.time() - start_time
-            return False, None, f"Wolfram kernel error: {str(e)}", execution_time
+                
+                execution_time = time.time() - start_time
+                logger.info(f"Query completed in {execution_time:.3f}s")
+                
+                return True, result, None, execution_time
+                
+            except asyncio.TimeoutError:
+                execution_time = time.time() - start_time
+                logger.error(f"Query timed out after {timeout}s")
+                return False, None, f"Query timed out after {timeout} seconds", execution_time
+                
         except Exception as e:
             execution_time = time.time() - start_time
-            return False, None, f"Query error: {str(e)}", execution_time
+            logger.error(f"Query failed: {e}")
+            return False, None, str(e), execution_time
+
+    async def is_available(self) -> Tuple[bool, Optional[str]]:
+        """Check if Wolfram Engine is available.
+        
+        Returns:
+            Tuple of (available, error_message)
+        """
+        try:
+            if await self._ensure_session():
+                return True, None
+            else:
+                return False, "Failed to create Wolfram session"
+        except Exception as e:
+            return False, str(e)
+
+    async def stop_session(self) -> None:
+        """Stop the Wolfram session (alias for close)."""
+        await self.close()
+
+    async def get_kernel_info(self) -> Optional[Dict[str, Any]]:
+        """Get information about the Wolfram Kernel.
+        
+        Returns:
+            Dictionary with kernel information or None if unavailable
+        """
+        try:
+            if not await self._ensure_session():
+                return None
+            
+            version = await self._run_in_executor(
+                lambda: self._session.evaluate(wlexpr("$Version"))
+            )
+            system_id = await self._run_in_executor(
+                lambda: self._session.evaluate(wlexpr("$SystemID"))
+            )
+            
+            return {
+                "version": str(version) if version else "Unknown",
+                "system_id": str(system_id) if system_id else "Unknown",
+                "session_active": True
+            }
+        except Exception as e:
+            logger.error(f"Failed to get kernel info: {e}")
+            return None
+
+    async def get_session_info(self) -> Dict[str, Any]:
+        """Get information about the current session."""
+        info = {
+            "session_active": self._session is not None and self._session_initialized,
+            "last_activity": self._last_activity,
+            "kernel_path": self.kernel_path,
+            "session_age": time.time() - self._last_activity if self._session_initialized else None
+        }
+        
+        if self._session and self._session_initialized:
+            try:
+                version = await self._run_in_executor(
+                    lambda: self._session.evaluate(wlexpr("$Version"))
+                )
+                info["version"] = str(version)
+            except Exception as e:
+                info["version_error"] = str(e)
+        
+        return info
+
+    async def close(self) -> None:
+        """Close the Wolfram session and cleanup resources."""
+        async with self._session_lock:
+            if self._session:
+                try:
+                    await self._run_in_executor(self._session.terminate)
+                    logger.info("Wolfram session terminated")
+                except Exception as e:
+                    logger.warning(f"Error terminating session: {e}")
+                finally:
+                    self._session = None
+                    self._session_initialized = False
+        
+        # Shutdown the executor
+        self._executor.shutdown(wait=True)
+        logger.info("Wolfram client closed")
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.close()

@@ -19,7 +19,7 @@ from .models import (
     WolframRequest, WolframResponse, HealthResponse, ErrorResponse,
     ExecuteWolframRequest, WolframAlphaRequest
 )
-from .wolfram_client import WolframExecutor
+from .wolfram_client import ImprovedWolframLanguageClient
 from . import __version__
 
 
@@ -32,7 +32,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global Wolfram executor
-wolfram_executor: WolframExecutor = None
+wolfram_executor: ImprovedWolframLanguageClient = None
 
 
 @asynccontextmanager
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Wolfram Language Server")
     kernel_path = os.getenv("WOLFRAM_KERNEL_PATH")
-    wolfram_executor = WolframExecutor(kernel_path=kernel_path)
+    wolfram_executor = ImprovedWolframLanguageClient(kernel_path=kernel_path)
 
     try:
         # Test Wolfram availability
